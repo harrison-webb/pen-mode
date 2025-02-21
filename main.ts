@@ -1,134 +1,479 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+	Plugin,
+	PluginSettingTab,
+	Notice,
+	Editor,
+	EditorPosition,
+	setIcon,
+	MarkdownView,
+	Setting,
+	App,
+	TFile,
+	normalizePath,
+} from "obsidian";
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface PenModePluginSettings {
+	logLevel: "debug" | "info" | "warn" | "error";
+	isActive: boolean;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+interface ObsidianConfig {
+	vimMode: boolean;
+	[key: string]: any;
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+const DEFAULT_SETTINGS: PenModePluginSettings = {
+	logLevel: "info",
+	isActive: false,
+};
+
+export default class PenModePlugin extends Plugin {
+	settings: PenModePluginSettings;
+	private statusBarItem: HTMLElement;
+	private isActive = false;
+	private logger: Logger;
+	private previousVimModeState = false;
+	private boundKeydownHandler: (event: KeyboardEvent) => void;
+
+	/**
+	 * Helper method to get the active editor using obsidian api
+	 * @returns active editor or null if none exists
+	 */
+	private getActiveEditor(): Editor | null {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		return view?.editor || null;
+	}
 
 	async onload() {
 		await this.loadSettings();
+		this.logger = new Logger(this.settings.logLevel);
+		this.boundKeydownHandler = this.handleKeydown.bind(this);
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		// add status bar item, hidden by default
+		this.statusBarItem = this.addStatusBarItem();
+		this.statusBarItem.style.display = "none";
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
+		// add command to toggle pen mode
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
+			id: "toggle-pen-mode",
+			name: "Toggle Pen Mode",
+			callback: () => this.togglePenMode(),
+			hotkeys: [],
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		// add settings tab (TODO this is prob unnecessary)
+		this.addSettingTab(new PenModeSettingTab(this.app, this));
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+		// restore previous state if it was active
+		if (this.settings.isActive) {
+			this.isActive = true;
+			this.enablePenMode();
+			this.updateStatusBar();
+		}
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		this.logger.info("Pen mode plugin loaded");
 	}
 
 	onunload() {
-
+		// clean up event listeners
+		if (this.isActive) {
+			this.disablePenMode();
+		}
+		this.logger.info("Pen mode plugin unloaded");
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	private togglePenMode() {
+		this.isActive = !this.isActive;
+
+		if (this.isActive) {
+			this.enablePenMode();
+		} else {
+			this.disablePenMode();
+		}
+
+		this.settings.isActive = this.isActive;
+		this.saveSettings();
+
+		this.updateStatusBar();
+
+		// show notification
+		new Notice(`Pen Mode ${this.isActive ? "enabled" : "disabled"}`);
+		this.logger.info(`Pen Mode ${this.isActive ? "enabled" : "disabled"}`);
+	}
+
+	/**
+	 * Read the Obsidian config file
+	 * @returns Promise with the config object
+	 */
+	private async readObsidianConfig(): Promise<ObsidianConfig> {
+		try {
+			const configPath = normalizePath(
+				`${this.app.vault.configDir}/app.json`
+			);
+			const configData = await this.app.vault.adapter.read(configPath);
+			return JSON.parse(configData);
+		} catch (error) {
+			this.logger.error("Error reading Obsidian config: ", error);
+			throw new Error("Failed to read Obsidian config");
+		}
+	}
+
+	/**
+	 * Write to the Obsidian config file
+	 * @param config The config object to write
+	 */
+	private async writeObsidianConfig(config: ObsidianConfig): Promise<void> {
+		try {
+			const configPath = normalizePath(
+				`${this.app.vault.configDir}/app.json`
+			);
+			const configData = JSON.stringify(config, null, 2);
+			await this.app.vault.adapter.write(configPath, configData);
+		} catch (error) {
+			this.logger.error("Error writing Obsidian config:", error);
+			throw new Error("Failed to write Obsidian config");
+		}
+	}
+
+	/**
+	 * Set Vim mode to a specific state
+	 * @param enableVim Whether to enable or disable Vim mode
+	 */
+	private async setVimMode(enableVim: boolean): Promise<void> {
+		try {
+			const config = await this.readObsidianConfig();
+
+			// Store current state before changing
+			this.previousVimModeState = config.vimMode;
+
+			// Update config
+			config.vimMode = enableVim;
+			await this.writeObsidianConfig(config);
+
+			this.logger.info(`Vim mode ${enableVim ? "enabled" : "disabled"}`);
+		} catch (error) {
+			this.logger.error("Error setting up Vim mode:", error);
+			new Notice("Failed to update vim mode settings");
+		}
+	}
+
+	private async enablePenMode() {
+		// show status bar indicator
+		this.statusBarItem.style.display = "block";
+
+		try {
+			// read current vim mode state and save it
+			const config = await this.readObsidianConfig();
+			this.previousVimModeState = config.vimMode;
+
+			// disable vim mode if active
+			if (config.vimMode) {
+				config.vimMode = false;
+				await this.writeObsidianConfig(config);
+				this.logger.info("Vim mode disabled for Pen Mode");
+			}
+		} catch (error) {
+			this.logger.error(
+				"Error handling Vim mode when enabling Pen Mode:",
+				error
+			);
+			new Notice("Failed to update Vim mode settings");
+		}
+
+		// add visual indicator to screen
+		this.addEditorVisualIndicator();
+
+		// unregister any existing handlers first to avoid duplicates
+		document.removeEventListener("keydown", this.boundKeydownHandler, true);
+
+		// register event handlers with capture phase
+		document.addEventListener("keydown", this.boundKeydownHandler, true);
+		this.logger.info(
+			"Keyboard event handler registered with capture phase"
+		);
+
+		// also register through obsidian api as fallback
+		this.registerDomEvent(
+			document,
+			"keydown",
+			this.boundKeydownHandler,
+			true
+		);
+	}
+
+	private async disablePenMode() {
+		// hide status bar indicator
+		this.statusBarItem.style.display = "none";
+
+		// remove visual indicator
+		this.removeEditorVisualIndicator();
+
+		// unregister event handlers
+		document.removeEventListener("keydown", this.boundKeydownHandler, true);
+
+		try {
+			// restore previous vim mode state
+			const config = await this.readObsidianConfig();
+			if (config.vimMode !== this.previousVimModeState) {
+				config.vimMode = this.previousVimModeState;
+				await this.writeObsidianConfig(config);
+				this.logger.info(
+					`Vim mode restored to ${
+						this.previousVimModeState ? "enabled" : "disabled"
+					}`
+				);
+			}
+		} catch (error) {
+			this.logger.error("Error restoring vim mode:", error);
+			new Notice("Failed to restore vim mode settings");
+		}
+	}
+
+	private addEditorVisualIndicator() {
+		const editorEl = document.querySelector(".cm-editor");
+		if (editorEl) {
+			editorEl.classList.add("pen-mode-active");
+
+			// add css for the visual indicator
+			const existingStyle = document.getElementById("pen-mode-style");
+			if (!existingStyle) {
+				const style = document.createElement("style");
+				style.id = "pen-mode-style";
+				style.textContent = `
+					.pen-mode-active {
+						border: 2px solid rgba(120, 160, 255, 0.4) !important;
+						background-color: rgba(120, 160, 255, 0.05) !important
+					}
+				`;
+				document.head.appendChild(style);
+			}
+		}
+	}
+
+	private removeEditorVisualIndicator() {
+		document.querySelectorAll(".cm-editor").forEach((el) => {
+			el.classList.remove("pen-mode-active");
+		});
+	}
+
+	private updateStatusBar() {
+		this.statusBarItem.empty();
+		setIcon(this.statusBarItem, "pencil");
+		this.statusBarItem.createSpan({ text: " Pen Mode" });
+	}
+
+	private handleKeydown(event: KeyboardEvent) {
+		if (!this.isActive) return;
+
+		const disabledKeys = [
+			"ArrowUp",
+			"ArrowDown",
+			"ArrowRight",
+			"Delete",
+			"Backspace",
+			"PageUp",
+			"PageDown",
+		];
+
+		if (disabledKeys.includes(event.key)) {
+			event.preventDefault();
+			event.stopPropagation();
+			this.logger.debug(`Prevented key: ${event.key}`);
+			return;
+		}
+
+		if (event.key === "ArrowLeft") {
+			event.preventDefault();
+			this.strikethroughLastWord();
+			this.logger.debug("Strikethrough applied");
+		}
+	}
+
+	private strikethroughLastWord() {
+		const editor = this.getActiveEditor();
+		if (!editor) return;
+
+		try {
+			const cursor = editor.getCursor();
+			const line = editor.getLine(cursor.line);
+			const beforeCursor = line.slice(0, cursor.ch);
+
+			// check if cursor is immediately after whitespace
+			const isAfterWhitespace =
+				beforeCursor.length > 0 && /\s$/.test(beforeCursor);
+
+			if (isAfterWhitespace) {
+				// find the last non whitespace character before cursor
+				const lastNonWhitespaceIndex =
+					beforeCursor.trimEnd().length - 1;
+
+				// if there is text on the line
+				if (lastNonWhitespaceIndex >= 0) {
+					// find last word boundary (any whitespace followed by non-whitespace)
+					const lastWordMatch = beforeCursor
+						.substring(0, lastNonWhitespaceIndex + 1)
+						.match(/(\s+)[^\s]*S/);
+					let wordStart = 0;
+
+					if (lastWordMatch && lastWordMatch.index !== undefined) {
+						// start position is after the whitespace
+						wordStart =
+							lastWordMatch.index + lastWordMatch[1].length;
+					}
+
+					// find the end of the last word (where whitespace begins)
+					const wordEnd = lastNonWhitespaceIndex + 1;
+
+					// get the text to strikethrough
+					const wordText = line.substring(wordStart, wordEnd);
+
+					// only proceed if there is text to strikethrough
+					if (wordText.trim()) {
+						const strikethroughText = `~~${wordText}~~`;
+
+						// apply strikethrough
+						const from: EditorPosition = {
+							line: cursor.line,
+							ch: wordStart,
+						};
+						const to: EditorPosition = {
+							line: cursor.line,
+							ch: wordEnd,
+						};
+
+						editor.replaceRange(strikethroughText, from, to);
+
+						// move cursor right 4 spaces to adjust for strikethrough
+						cursor.ch += 4;
+						editor.setCursor(cursor);
+						return;
+					}
+				}
+			}
+
+			// default behavior: search left from cursor to any whitespace
+			const lastWordMatch = beforeCursor.match(/(\s+)?([^\s]*)$/);
+			let wordStart = 0;
+
+			if (lastWordMatch && lastWordMatch.index !== undefined) {
+				if (lastWordMatch[1]) {
+					// if there was whitespace before the word, start after it
+					wordStart = lastWordMatch.index + lastWordMatch[1].length;
+				} else {
+					// otherwise start at the beginning of the match
+					wordStart = lastWordMatch.index;
+				}
+			}
+
+			// the word is between wordStart and cursor position
+			const wordText = line.substring(wordStart, cursor.ch);
+
+			// only proceed if there is actual text to strikethrough
+			if (!wordText.trim()) return;
+
+			// apply strikethrough and add a space at the end
+			const strikethroughText = `~~${wordText}~~`;
+			const from: EditorPosition = { line: cursor.line, ch: wordStart };
+			const to: EditorPosition = { line: cursor.line, ch: cursor.ch };
+
+			editor.replaceRange(strikethroughText, from, to);
+
+			// move cursor right 4 spaces to adjust for strikethrough
+			cursor.ch += 4;
+			editor.setCursor(cursor);
+		} catch (error) {
+			this.logger.error("Error applying strikethrough: ", error);
+			new Notice("Failed to apply strikethrough");
+		}
+	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+class Logger {
+	private level: "debug" | "info" | "warn" | "error";
+	private levels: Record<string, number> = {
+		debug: 0,
+		info: 1,
+		warn: 2,
+		error: 3,
+	};
+
+	constructor(level: "debug" | "info" | "warn" | "error") {
+		this.level = level;
 	}
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
+	private shouldLog(
+		messageLevel: "debug" | "info" | "warn" | "error"
+	): boolean {
+		return this.levels[messageLevel] >= this.levels[this.level];
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	debug(...args: any[]) {
+		if (this.shouldLog("debug")) {
+			console.debug("[Pen Mode]", ...args);
+		}
+	}
+
+	info(...args: any[]) {
+		if (this.shouldLog("info")) {
+			console.info("[Pen Mode]", ...args);
+		}
+	}
+	warn(...args: any[]) {
+		if (this.shouldLog("warn")) {
+			console.warn("[Pen Mode]", ...args);
+		}
+	}
+	error(...args: any[]) {
+		if (this.shouldLog("error")) {
+			console.error("[Pen Mode]", ...args);
+		}
 	}
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+class PenModeSettingTab extends PluginSettingTab {
+	plugin: PenModePlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: PenModePlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
 	display(): void {
-		const {containerEl} = this;
-
+		const { containerEl } = this;
 		containerEl.empty();
 
+		containerEl.createEl("h2", { text: "Pen Mode Settings" });
+
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+			.setName("Log Level")
+			.setDesc("Set the logging level for debugging")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOptions({
+						debug: "Debug",
+						info: "Info",
+						warn: "Warning",
+						error: "Error",
+					})
+					.setValue(this.plugin.settings.logLevel)
+					.onChange(
+						async (value: "debug" | "info" | "warn" | "error") => {
+							this.plugin.settings.logLevel = value;
+							await this.plugin.saveSettings();
+						}
+					)
+			);
 	}
 }
