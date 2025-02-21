@@ -13,6 +13,7 @@ Solution: Pen Mode Plugin for Obsidian. This plugin DISABLES the delete key, arr
 -   add a space after strikethrough gets applied
 -   don't allow for a crossed-out word to be crossed-out again
 -   remove all the console logging
+-   add to obsidian community plugins
 
 # stuff from the obsidian sample plugin readme
 
