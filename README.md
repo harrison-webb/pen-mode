@@ -14,7 +14,7 @@ Solution: Pen Mode Plugin for Obsidian. This plugin DISABLES the delete key, arr
 -   don't allow for a crossed-out word to be crossed-out again
 -   remove all the console logging
 
-# Obsidian Sample Plugin
+# stuff from the obsidian sample plugin readme
 
 This is a sample plugin for Obsidian (https://obsidian.md).
 
