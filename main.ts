@@ -310,123 +310,203 @@ export default class PenModePlugin extends Plugin {
 			const line = editor.getLine(cursor.line);
 			const beforeCursor = line.slice(0, cursor.ch);
 
-			// check if there isi a strikethrough marker right before the cursor position
-			// this prevents applying strikethrough multiple times to the same word
-			if (
-				beforeCursor.endsWith("~~") ||
-				(beforeCursor.length >= 4 &&
-					beforeCursor
-						.substring(beforeCursor.length - 4)
-						.includes("~~"))
-			) {
-				// word already has a strikethrough applied -> do nothing
+			// Early exit if we detect strikethrough markers nearby
+			if (this.hasNearbyStrikethroughMarkers(beforeCursor)) {
 				this.logger.debug(
 					"Word already has strikethrough applied, ignoring"
 				);
 				return;
 			}
 
-			// check if cursor is immediately after whitespace
+			// Case 1: Cursor is after whitespace - handle the last word before the whitespace
 			const isAfterWhitespace =
 				beforeCursor.length > 0 && /\s$/.test(beforeCursor);
-
 			if (isAfterWhitespace) {
-				// when cursor is after whitespace, we want to strikethrough last word before whitespace
-				const trimmedBeforeCursor = beforeCursor.trimEnd();
-
-				// check if the last word already has strikethrough
-				if (
-					trimmedBeforeCursor.endsWith("~~") ||
-					trimmedBeforeCursor.slice(-4).includes("~~")
-				) {
-					this.logger.debug(
-						"Word already has strikethrough, ignoring"
-					);
-					return;
-				}
-
-				// find the start of the last word by searching backwards from end of trimmed string
-				const lastSpaceIndex = trimmedBeforeCursor.lastIndexOf(" ");
-				const wordStart =
-					lastSpaceIndex === -1 ? 0 : lastSpaceIndex + 1;
-				const wordEnd = trimmedBeforeCursor.length;
-
-				// get the text to strikethrough
-				const wordText = trimmedBeforeCursor.substring(wordStart);
-
-				// only proceed if there is text to strikethrough
-				if (wordText.trim()) {
-					const strikethroughText = `~~${wordText}~~`;
-
-					// apply strikethrough
-					const from: EditorPosition = {
-						line: cursor.line,
-						ch: wordStart,
-					};
-					const to: EditorPosition = {
-						line: cursor.line,
-						ch: wordEnd,
-					};
-
-					editor.replaceRange(strikethroughText, from, to);
-
-					// adjust cursor position
-					cursor.ch += 4;
-					editor.setCursor(cursor);
-					return;
-				}
-			}
-
-			// default behavior: search left from cursor to any whitespace
-			const lastWordMatch = beforeCursor.match(/(\s+)?([^\s]*)$/);
-			let wordStart = 0;
-
-			if (lastWordMatch && lastWordMatch.index !== undefined) {
-				if (lastWordMatch[1]) {
-					// if there was whitespace before the word, start after it
-					wordStart = lastWordMatch.index + lastWordMatch[1].length;
-				} else {
-					// otherwise start at the beginning of the match
-					wordStart = lastWordMatch.index;
-				}
-			}
-
-			// the word is between wordStart and cursor position
-			const wordText = line.substring(wordStart, cursor.ch);
-
-			// only proceed if there is actual text to strikethrough
-			if (!wordText.trim()) return;
-
-			// check if the word or its surroundings already have strikethrough markers
-			if (
-				wordText.includes("~~") ||
-				(wordStart >= 2 &&
-					line.substring(wordStart - 2, wordStart) === "~~") ||
-				(cursor.ch + 2 <= line.length &&
-					line.substring(cursor.ch, cursor.ch + 2) === "~~")
-			) {
-				this.logger.debug("Word already has strikethrough, ignoring");
+				this.handleStrikethroughAfterWhitespace(
+					editor,
+					cursor,
+					line,
+					beforeCursor
+				);
 				return;
 			}
 
-			// apply strikethrough and add a space at the end
-			const strikethroughText = `~~${wordText}~~ `;
-			const from: EditorPosition = { line: cursor.line, ch: wordStart };
-			const to: EditorPosition = { line: cursor.line, ch: cursor.ch };
-
-			editor.replaceRange(strikethroughText, from, to);
-
-			// // move cursor right 4 spaces to adjust for strikethrough
-			// cursor.ch += 4;
-			// editor.setCursor(cursor);
-
-			// move cursor to after the space that was just added
-			const newCursorCh = wordStart + strikethroughText.length;
-			editor.setCursor({ line: cursor.line, ch: newCursorCh });
+			// Case 2: Cursor is on a word - handle the word at cursor
+			this.handleStrikethroughAtCursor(
+				editor,
+				cursor,
+				line,
+				beforeCursor
+			);
 		} catch (error) {
 			this.logger.error("Error applying strikethrough: ", error);
 			new Notice("Failed to apply strikethrough");
 		}
+	}
+
+	/**
+	 * Check if there are strikethrough markers near the cursor
+	 */
+	private hasNearbyStrikethroughMarkers(text: string): boolean {
+		// Check if text ends with strikethrough markers
+		if (text.endsWith("~~")) return true;
+
+		// Check if strikethrough markers appear in the last 4 characters
+		if (text.length >= 4 && text.substring(text.length - 4).includes("~~"))
+			return true;
+
+		return false;
+	}
+
+	/**
+	 * Handle strikethrough when cursor is after whitespace
+	 */
+	private handleStrikethroughAfterWhitespace(
+		editor: Editor,
+		cursor: EditorPosition,
+		line: string,
+		beforeCursor: string
+	) {
+		const trimmedBeforeCursor = beforeCursor.trimEnd();
+
+		// Check for strikethrough markers in the last word
+		if (this.hasNearbyStrikethroughMarkers(trimmedBeforeCursor)) {
+			this.logger.debug("Word already has strikethrough, ignoring");
+			return;
+		}
+
+		// Find the start of the last word
+		const lastSpaceIndex = trimmedBeforeCursor.lastIndexOf(" ");
+		const wordStart = lastSpaceIndex === -1 ? 0 : lastSpaceIndex + 1;
+		const wordEnd = trimmedBeforeCursor.length;
+
+		// Get the text to strikethrough
+		const wordText = trimmedBeforeCursor.substring(wordStart);
+
+		// Only proceed if there is text to strikethrough
+		if (!wordText.trim()) return;
+
+		// Apply strikethrough
+		const strikethroughText = `~~${wordText}~~`;
+		this.applyStrikethrough(
+			editor,
+			cursor,
+			{
+				line: cursor.line,
+				ch: wordStart,
+			},
+			{
+				line: cursor.line,
+				ch: wordEnd,
+			},
+			strikethroughText
+		);
+
+		// adjust cursor position
+		cursor.ch += 4;
+		editor.setCursor(cursor);
+	}
+
+	/**
+	 * Handle strikethrough when cursor is on a word
+	 */
+	private handleStrikethroughAtCursor(
+		editor: Editor,
+		cursor: EditorPosition,
+		line: string,
+		beforeCursor: string
+	) {
+		// Find the word at cursor
+		const lastWordMatch = beforeCursor.match(/(\s+)?([^\s]*)$/);
+		let wordStart = 0;
+
+		if (lastWordMatch && lastWordMatch.index !== undefined) {
+			if (lastWordMatch[1]) {
+				// If there was whitespace before the word, start after it
+				wordStart = lastWordMatch.index + lastWordMatch[1].length;
+			} else {
+				// Otherwise start at the beginning of the match
+				wordStart = lastWordMatch.index;
+			}
+		}
+
+		// The word is between wordStart and cursor position
+		const wordText = line.substring(wordStart, cursor.ch);
+
+		// Only proceed if there is actual text to strikethrough
+		if (!wordText.trim()) return;
+
+		// Check for strikethrough markers in or around the word
+		if (
+			this.hasStrikethroughInOrAroundWord(
+				wordText,
+				wordStart,
+				cursor.ch,
+				line
+			)
+		) {
+			this.logger.debug("Word already has strikethrough, ignoring");
+			return;
+		}
+
+		// Apply strikethrough and add a space at the end
+		const strikethroughText = `~~${wordText}~~ `;
+		this.applyStrikethrough(
+			editor,
+			cursor,
+			{
+				line: cursor.line,
+				ch: wordStart,
+			},
+			{
+				line: cursor.line,
+				ch: cursor.ch,
+			},
+			strikethroughText
+		);
+
+		// Move cursor to after the space that was just added
+		const newCursorCh = wordStart + strikethroughText.length;
+		editor.setCursor({ line: cursor.line, ch: newCursorCh });
+	}
+
+	/**
+	 * Check if there are strikethrough markers in or around the word
+	 */
+	private hasStrikethroughInOrAroundWord(
+		wordText: string,
+		wordStart: number,
+		wordEnd: number,
+		line: string
+	): boolean {
+		// Check if the word itself contains strikethrough markers
+		if (wordText.includes("~~")) return true;
+
+		// Check if there are strikethrough markers right before the word
+		if (wordStart >= 2 && line.substring(wordStart - 2, wordStart) === "~~")
+			return true;
+
+		// Check if there are strikethrough markers right after the word
+		if (
+			wordEnd + 2 <= line.length &&
+			line.substring(wordEnd, wordEnd + 2) === "~~"
+		)
+			return true;
+
+		return false;
+	}
+
+	/**
+	 * Apply strikethrough formatting to text
+	 */
+	private applyStrikethrough(
+		editor: Editor,
+		cursor: EditorPosition,
+		from: EditorPosition,
+		to: EditorPosition,
+		strikethroughText: string
+	) {
+		editor.replaceRange(strikethroughText, from, to);
 	}
 }
 
