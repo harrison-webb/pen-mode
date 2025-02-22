@@ -10,7 +10,7 @@ Morning Pages (from Julia Cameron) or other flavors of stream of consciousness w
 Computer good, handwriting bad. However, I think handwriting _does_ have a big advantage for stream of consciousness writing: you are ONLY writing. On a computer, I find that "writing" actually means writing+editing in rapid oscillation, which I believe is detrimental for stream of consciousness writing.
 
 **Solution**:
-Pen Mode Plugin for Obsidian. This plugin DISABLES the delete key, arrow keys, and other stuff that some people might use to move their cursor around and change what they have written (page up / page down / etc.). The ONLY option that you have is the left arrow key, which will apply strikethrough to the last word you have typed (akin to crossing out a word in pen).
+Pen Mode Plugin for Obsidian. This plugin temporarily DISABLES the delete key, arrow keys, and other stuff that some people might use to move their cursor around and change what they have written (page up / page down / etc.). The ONLY option that you have is the left arrow key, which will apply strikethrough to the last word you have typed (akin to crossing out a word in pen). Let the words and creativity flow 🌊
 
 # TODO
 
