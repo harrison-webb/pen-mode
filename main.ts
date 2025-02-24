@@ -23,7 +23,7 @@ interface ObsidianConfig {
 }
 
 const DEFAULT_SETTINGS: PenModePluginSettings = {
-	logLevel: "info",
+	logLevel: "warn",
 	isActive: false,
 };
 
