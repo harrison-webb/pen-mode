@@ -16,6 +16,7 @@ Pen Mode Plugin for Obsidian. This plugin temporarily DISABLES the delete key, a
 
 -   remove all the console logging
 -   add to obsidian community plugins
+-   add video to this readme of plugin in action
 
 # stuff from the obsidian sample plugin readme
 
