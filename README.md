@@ -12,7 +12,7 @@ Computer good, handwriting bad. However, I think handwriting _does_ have a big a
 **Solution**:
 Pen Mode Plugin for Obsidian. This plugin temporarily DISABLES the delete key, arrow keys, and other stuff that some people might use to move their cursor around and change what they have written (page up / page down / etc.). The ONLY option that you have is the left arrow key, which will apply strikethrough to the last word you have typed (akin to crossing out a word in pen). Let the words and creativity flow 🌊
 
-# INSTALLING PEN MODE
+# Installation
 
 I'm currently "beta testing" the plugin before releasing it onto the Obsidian community plugin list. To manually install Pen Mode in the meantime, there are just a few steps to follow (involving terminal commands but if you're reading a github README I'll assume you have some familiarity with that):
 
