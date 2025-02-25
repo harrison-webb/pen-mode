@@ -27,6 +27,7 @@ I'm currently "beta testing" the plugin before releasing it onto the Obsidian co
 -   remove all the console logging
 -   add to obsidian community plugins
 -   add video to this readme of plugin in action
+-   "cleanup" function -> once you are done writing with Pen Mode, "cleanup" the strikethrough-ed words in the document
 
 # stuff from the obsidian sample plugin readme
 
